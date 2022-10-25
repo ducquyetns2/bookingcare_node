@@ -2,8 +2,7 @@ import express from 'express'
 import UserControl from '../controller/UserControl.js'
 
 const router = express.Router()
-
-router.get('/getDetailUser/:id', UserControl.getDetailUser)
+router.post('/createUserSchedule', UserControl.createUserSchedule)
 router.delete('/deleteUser/:id', UserControl.deleteUser)
 router.put('/changePassword', UserControl.changePassword)
 router.put('/editUser', UserControl.editUser)

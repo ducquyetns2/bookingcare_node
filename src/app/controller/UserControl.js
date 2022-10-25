@@ -1,11 +1,10 @@
 import User from '../modal/User.js'
-import connectDB from '../modal/connectDB.js'
 import formidableConfig from './formidableConfig.js'
 import fs from 'fs'
 import Define from '../modal/Define.js'
-import association from '../modal/association.js'
+import { department } from '../../constant.js'
+import UserSchedule from '../modal/UserSchedule.js'
 
-association()
 class UserControl {
     getAllUser(req, res) {
         User.findAll({
@@ -38,33 +37,38 @@ class UserControl {
         })
 
     }
-    getUser(req, res) {
-        User.findOne({
-            raw: true,
-            where: { useName: req.body.useName, password: req.body.password },
-            attributes: {
-                exclude: ['password', 'createAt', 'updateAt', 'department', 'position']
-            }
-        }).then(result => {
-            if (result) {
-                res.status(200).json({
-                    error: false,
-                    message: 'Successfully login',
-                    data: result
-                })
-            } else {
-                res.status(200).json({
-                    error: true,
-                    message: 'UseName or password is incorrect'
-                })
-            }
-        }).catch((error) => {
+    async getUser(req, res) {
+        let recievedData = req.body
+        let findedUser = {}
+        if (recievedData.department && recievedData.department !== department.USER) {
+            findedUser = await User.findOne({
+                raw: true,
+                where: { useName: recievedData.useName, password: recievedData.password, department: recievedData.department },
+                attributes: {
+                    exclude: ['password', 'createAt', 'updateAt', 'position']
+                }
+            })
+        } else {
+            findedUser = await User.findOne({
+                raw: true,
+                where: { useName: recievedData.useName, password: recievedData.password },
+                attributes: {
+                    exclude: ['password', 'createAt', 'updateAt', 'position']
+                }
+            })
+        }
+        if (findedUser) {
+            res.status(200).json({
+                error: false,
+                message: 'Successfully login',
+                data: findedUser
+            })
+        } else {
             res.status(200).json({
                 error: true,
-                message: 'System error',
-                data: error
+                message: 'UseName or password is incorrect'
             })
-        })
+        }
     }
     createUser(req, res) {
         const dir = 'src/public/uploads/avatars'
@@ -99,13 +103,11 @@ class UserControl {
         let data = req.body
         const findedUser = await User.findOne({ where: { useName: data.useName, password: data.currentPassword } })
         if (findedUser) {
-            User.update({ password: data.newPassword }, {
-                where: { useName: data.useName, password: data.currentPassword }
-            }).then(result => {
-                res.status(200).json({
-                    error: false,
-                    message: 'Change password successfully',
-                })
+            findedUser.password = data.newPassword
+            findedUser.save()
+            res.status(200).json({
+                error: false,
+                message: 'Change password successfully',
             })
         } else {
             res.status(200).json({
@@ -118,86 +120,98 @@ class UserControl {
         const dir = 'src/public/uploads/avatars'
         const formidable = formidableConfig(dir)
         formidable.parse(req, async (err, fields, file) => {
-            const findedName = fields.useName && await User.findOne({ where: { useName: fields.useName } })
-            if (findedName) {
+            if (fields.isChangeUseName === 'true') {
+                const findedName = await User.findOne({ where: { useName: fields.useName } })
+                if (findedName) {
+                    res.status(200).json({
+                        error: true,
+                        message: 'UseName has been exist'
+                    })
+                    return
+                }
+            }
+            User.update({
+                ...fields
+            }, { where: { id: fields.id } })
+            // Update Avatar
+            if (file.avatar) {
+                const findedUser = await User.findOne({ where: { id: fields.id } })
+                const filePath = findedUser.filePath
+                console.log(filePath)
+                // Delete current Avatar
+                fs.unlink(filePath, () => { })
+                const newAvatarPath = req.protocol + "://" + req.get('host') + "/uploads/avatars/"
+                    + file.avatar.newFilename
+                // Update User
+                findedUser.avatarPath = newAvatarPath
+                findedUser.filePath = file.avatar.filepath
+                findedUser.save()
                 res.status(200).json({
-                    error: true,
-                    message: 'UseName has been exist'
+                    error: false,
+                    message: 'Change information successfully',
+                    data: {
+                        ...fields,
+                        avatarPath: newAvatarPath
+                    }
                 })
             } else {
-                User.update({
-                    ...fields
-                }, { where: { id: fields.id } })
-                // Update Avatar
-                if (file.avatar) {
-                    const findedUser = await User.findOne({ where: { id: fields.id } })
-                    const filePath = findedUser.filePath
-                    // Delete current Avatar
-                    fs.unlink(filePath, () => { })
-                    const newAvatarPath = req.protocol + "://" + req.get('host') + "/uploads/avatars/"
-                        + file.avatar.newFilename
-                    // Update User
-                    User.update({
-                        avatarPath: newAvatarPath,
-                        filePath: file.avatar.filepath
-                    }, { where: { id: fields.id } })
-                        .then(result => {
-                            res.status(200).json({
-                                error: false,
-                                message: 'Change information successfully',
-                                data: {
-                                    ...fields,
-                                    avatarPath: newAvatarPath,
-                                }
-                            })
-                        })
-                } else {
-                    res.status(200).json({
-                        error: false,
-                        message: 'Change information successfully',
-                        data: {
-                            ...fields
-                        }
-                    })
-                }
+                res.status(200).json({
+                    error: false,
+                    message: 'Change information successfully',
+                    data: {
+                        ...fields
+                    }
+                })
             }
         })
     }
-    deleteUser(req, res) {
-        var UserId = req.params.id
-        if (UserId !== 'undefined') {
-            User.destroy({
-                where: { id: UserId }
-            }).then(() => {
-                res.status(200).json({
-                    error: false,
-                    message: 'Delete User successfully'
-                })
+    async deleteUser(req, res) {
+        let userId = parseInt(req.params.id)
+        if (userId) {
+            const findedUser = await User.findByPk(userId)
+            let filePath = findedUser.filePath
+            fs.unlink(filePath, () => { })
+            findedUser.destroy()
+            res.status(200).json({
+                error: false,
+                message: 'Delete User successfully'
             })
         } else {
             res.status(200).json({
                 error: true,
-                message: 'Missing parameter'
+                message: 'Missing parameter or unvalid paramter'
             })
         }
     }
-    getDetailUser(req, res) {
-        var UserId = req.params.id
-        if (UserId !== 'undefined') {
-            User.findByPk(UserId).then(result => {
-                res.status(200).json({
-                    error: false,
-                    message: 'Get User successfully',
-                    data: result
-                })
+    createUserSchedule(req, res) {
+        UserSchedule.findAll({ where: { userId: req.body.userId } })
+            .then(result => {
+                if (result.length < 10) {
+                    UserSchedule.findOrCreate({
+                        where: { userId: req.body.userId, bookedTime: req.body.bookedTime },
+                        defaults: req.body
+                    }).then(([user, created]) => {
+                        if (created) {
+                            res.status(200).json({
+                                error: false,
+                                message: 'Create an appointment successfully'
+                            })
+                        } else {
+                            res.status(200).json({
+                                error: true,
+                                isDulicate: true,
+                                message: 'An appointment at this time has booked'
+                            })
+                        }
+                    })
+
+                } else {
+                    res.status(200).json({
+                        error: true,
+                        message: 'Create exceed maximun'
+                    })
+                }
             })
-        } else {
-            res.status(200).json({
-                error: true,
-                message: 'Missing parameter',
-                data: {}
-            })
-        }
     }
 }
 export default new UserControl()

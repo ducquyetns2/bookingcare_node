@@ -1,6 +1,5 @@
 import { DataTypes } from 'sequelize'
 import sequelize from './sequelize.js'
-import Define from './Define.js'
 
 const User = sequelize.define('User', {
     id: {
